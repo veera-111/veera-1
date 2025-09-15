@@ -606,7 +606,92 @@ def resolve_to_op_tape(config: Dict[str, Any], *, orig_size: Tuple[int,int]) -> 
 ### Next Session Priorities:
 1. Fix the coordinate reading in releases.py
 2. Test complete system functionality
-3. Verify all components work together
+3. Verify all components work
+
+---
+
+## 🚨 CURRENT CRITICAL ISSUE - DEBUG.JSON FILES NOT CREATED & TRANSFORMATIONS NOT WORKING
+
+### **ISSUE DISCOVERED**: 
+- ❌ **Debug.json files**: NOT being created in ZIP metadata folder during release process
+- ❌ **Rotation transformation**: Annotations not rotating with image (rotation -23° not applied to coordinates)
+- ❌ **Resize transformation**: Annotations not scaling properly from 800x600 to 240x240
+- ✅ **Flip transformation**: Working correctly (flip_horizontal applied properly)
+
+### **ROOT CAUSE ANALYSIS**:
+
+#### **1. Debug.json Creation Logic**:
+```python
+# releases.py line 4289: Debug info set correctly
+tracking_data['debug_info'] = debug_tracking
+
+# releases.py line 4295: Debug JSON creation condition
+if transformation_tracking_data and transformation_tracking_data.get('debug_info'):
+    # Creates debug.json files
+```
+
+#### **2. Geometric Transform Detection**:
+```python
+# releases.py line 3956: Geometric transform types
+geometric_transform_types = {
+    'resize', 'rotate', 'rotation', 'flip', 'crop', 'random_zoom', 
+    'affine_transform', 'perspective_warp', 'shear'
+}
+
+# releases.py line 3978: Transform type checking
+'is_geometric': transform_type in geometric_transform_types
+```
+
+#### **3. Annotation Transformer Compatibility**:
+```python
+# annotation_transformer.py line 365: Coordinate transforms
+coordinate_transforms = {'resize', 'rotation', 'flip', 'crop', 'random_zoom', 'affine_transform', 'perspective_warp', 'shear'}
+```
+
+### **INVESTIGATION RESULTS**:
+- ✅ **Transformation names match**: `flip`, `rotation`, `resize` are all in geometric_transform_types
+- ✅ **Annotation transformer supports**: All three transformations in coordinate_transforms set
+- ✅ **Debug tracking enabled**: Logs show "resize" detected with debug_tracking=true
+- ❌ **Actual issue**: Annotation transformer expects BoundingBox/Polygon objects, not dictionaries
+
+### **DISCOVERED BUG**:
+```python
+# annotation_transformer.py expects:
+test_annotation = BoundingBox(x_min=200.0, y_min=150.0, x_max=600.0, y_max=450.0, class_name='car', class_id=1)
+
+# But releases.py is passing dictionary format:
+test_annotation = {'type': 'bbox', 'x_min': 200.0, 'y_min': 150.0, 'x_max': 600.0, 'y_max': 450.0, 'class_name': 'car', 'class_id': 1}
+
+# Error: "tuple indices must be integers or slices, not str"
+```
+
+### **PERFECT SOLUTION FOR NEXT SESSION**:
+
+#### **STEP 1: Fix Data Format Conversion**
+- Convert dictionary annotations to BoundingBox/Polygon objects before calling annotation_transformer
+- Ensure proper object creation with all required fields
+
+#### **STEP 2: Verify Transformation Application**
+- Test resize: 800x600 → 240x240 (scale_x=0.3, scale_y=0.4)
+- Test rotation: -23° around image center
+- Test flip: horizontal flip (new_x = width - old_x)
+
+#### **STEP 3: Confirm Debug.json Creation**
+- Verify geometric transforms are detected correctly
+- Ensure has_geometric_transforms flag is True
+- Check debug.json files appear in ZIP metadata folder
+
+### **EXPECTED RESULTS AFTER FIX**:
+- ✅ Debug.json files created in ZIP metadata folder
+- ✅ Rotation annotations rotate correctly with image
+- ✅ Resize annotations scale properly from 800x600 to 240x240
+- ✅ All transformations working perfectly
+
+### **FILES TO MODIFY**:
+1. **releases.py**: Fix annotation format conversion before calling annotation_transformer
+2. **Test thoroughly**: Verify all three transformations work correctly
+
+### **READY FOR NEXT SESSION**: Complete understanding of issue and exact solution path identified. together
 4. Document final working solution
 
 ---

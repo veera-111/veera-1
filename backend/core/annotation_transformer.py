@@ -316,13 +316,13 @@ def _transform_single_annotation_with_debug(annotation: Union[BoundingBox, Polyg
             'x_max': float(annotation.x_max),
             'y_max': float(annotation.y_max)
         }
-        updated_annotation = _transform_bbox_with_debug(annotation, transformation_config, original_dims, new_dims, ann_debug)
+        updated_annotation = _transform_bbox(annotation, transformation_config, original_dims, new_dims, debug_info=ann_debug)
     elif isinstance(annotation, Polygon):
         ann_debug['original_coordinates'] = {
             'type': 'polygon',
             'points': [(float(x), float(y)) for x, y in annotation.points]
         }
-        updated_annotation = _transform_polygon_with_debug(annotation, transformation_config, original_dims, new_dims, ann_debug)
+        updated_annotation = _transform_polygon(annotation, transformation_config, original_dims, new_dims, debug_info=ann_debug)
     else:
         ann_debug['transformation_steps'].append({
             'step': 0,
@@ -350,17 +350,33 @@ def _transform_single_annotation_with_debug(annotation: Union[BoundingBox, Polyg
 
 
 def _transform_bbox(bbox: BoundingBox, transformation_config: Dict[str, Any],
-                    original_dims: Tuple[int, int], new_dims: Tuple[int, int]) -> Optional[BoundingBox]:
-    """Legacy: bbox updates by sequential transforms (approximation)."""
+                    original_dims: Tuple[int, int], new_dims: Tuple[int, int], 
+                    debug_info: Optional[Dict] = None) -> Optional[BoundingBox]:
+    """Transform bbox coordinates using sequential transforms with optional debug tracking."""
     x_min, y_min, x_max, y_max = bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max
     orig_width, orig_height = original_dims
     new_width, new_height = new_dims
 
     current_width, current_height = orig_width, orig_height
-    coordinate_transforms = {'resize', 'rotate', 'flip', 'crop', 'random_zoom', 'affine_transform', 'perspective_warp', 'shear'}
+    
+    # Updated coordinate_transforms to match transformation_config.py
+    # GEOMETRY TOOLS (affect coordinates): resize, rotation, flip, crop, random_zoom, affine_transform, perspective_warp, shear
+    # APPEARANCE TOOLS (don't affect coordinates): brightness, contrast, blur, noise, color_jitter, saturation, gamma, clahe, cutout
+    coordinate_transforms = {'resize', 'rotation', 'flip', 'crop', 'random_zoom', 'affine_transform', 'perspective_warp', 'shear'}
+    
+    step_counter = 0
 
     for transform_name, params in transformation_config.items():
         if transform_name in coordinate_transforms and params.get('enabled', True):
+            # Record coordinates before this transformation (for debug tracking)
+            if debug_info is not None:
+                before_coords = {
+                    'x_min': float(x_min),
+                    'y_min': float(y_min),
+                    'x_max': float(x_max),
+                    'y_max': float(y_max)
+                }
+            
             if transform_name == 'flip':
                 if params.get('horizontal', False):
                     x_min, x_max = current_width - x_max, current_width - x_min
@@ -427,7 +443,7 @@ def _transform_bbox(bbox: BoundingBox, transformation_config: Dict[str, Any],
                         x_min += paste_x; x_max += paste_x
                     current_width, current_height = target_width, target_height
 
-            elif transform_name == 'rotate':
+            elif transform_name == 'rotation':
                 # Implement rotation coordinate transformation
                 angle = params.get('angle', 0)
                 if angle != 0:
@@ -559,6 +575,37 @@ def _transform_bbox(bbox: BoundingBox, transformation_config: Dict[str, Any],
                                  'transform_name': transform_name
                              })
                 pass
+            
+            # Record debug info after this transformation
+            if debug_info is not None:
+                after_coords = {
+                    'x_min': float(x_min),
+                    'y_min': float(y_min),
+                    'x_max': float(x_max),
+                    'y_max': float(y_max)
+                }
+                
+                # Calculate coordinate changes
+                coordinate_changes = {
+                    'x_min_change': after_coords['x_min'] - before_coords['x_min'],
+                    'y_min_change': after_coords['y_min'] - before_coords['y_min'],
+                    'x_max_change': after_coords['x_max'] - before_coords['x_max'],
+                    'y_max_change': after_coords['y_max'] - before_coords['y_max'],
+                    'center_x_change': ((after_coords['x_min'] + after_coords['x_max'])/2) - ((before_coords['x_min'] + before_coords['x_max'])/2),
+                    'center_y_change': ((after_coords['y_min'] + after_coords['y_max'])/2) - ((before_coords['y_min'] + before_coords['y_max'])/2)
+                }
+                
+                debug_info['transformation_steps'].append({
+                    'step': step_counter,
+                    'transformation': transform_name,
+                    'parameters': params,
+                    'before_coordinates': before_coords,
+                    'after_coordinates': after_coords,
+                    'coordinate_changes': coordinate_changes,
+                    'current_dimensions': {'width': current_width, 'height': current_height}
+                })
+                
+                step_counter += 1
 
     # clip
     x_min = _clip(x_min, 0, new_width)
@@ -578,17 +625,30 @@ def _transform_bbox(bbox: BoundingBox, transformation_config: Dict[str, Any],
 
 
 def _transform_polygon(polygon: Polygon, transformation_config: Dict[str, Any],
-                       original_dims: Tuple[int, int], new_dims: Tuple[int, int]) -> Optional[Polygon]:
-    """Legacy: polygon updates by sequential transforms (approximation)."""
+                       original_dims: Tuple[int, int], new_dims: Tuple[int, int],
+                       debug_info: Optional[Dict] = None) -> Optional[Polygon]:
+    """Transform polygon coordinates using sequential transforms with optional debug tracking."""
     points = polygon.points.copy()
     orig_width, orig_height = original_dims
     new_width, new_height = new_dims
 
     current_width, current_height = orig_width, orig_height
-    coordinate_transforms = {'resize', 'rotate', 'flip', 'crop', 'random_zoom', 'affine_transform', 'perspective_warp', 'shear'}
+    
+    # Updated coordinate_transforms to match transformation_config.py
+    # GEOMETRY TOOLS (affect coordinates): resize, rotation, flip, crop, random_zoom, affine_transform, perspective_warp, shear
+    # APPEARANCE TOOLS (don't affect coordinates): brightness, contrast, blur, noise, color_jitter, saturation, gamma, clahe, cutout
+    coordinate_transforms = {'resize', 'rotation', 'flip', 'crop', 'random_zoom', 'affine_transform', 'perspective_warp', 'shear'}
+    
+    step_counter = 0
 
     for transform_name, params in transformation_config.items():
         if transform_name in coordinate_transforms and params.get('enabled', True):
+            # Record coordinates before this transformation (for debug tracking)
+            if debug_info is not None:
+                before_coords = {
+                    'type': 'polygon',
+                    'points': [(float(x), float(y)) for x, y in points]
+                }
 
             if transform_name == 'flip':
                 if params.get('horizontal', False):
@@ -651,7 +711,7 @@ def _transform_polygon(polygon: Polygon, transformation_config: Dict[str, Any],
                         points = [(x + paste_x, y) for x, y in points]
                     current_width, current_height = target_width, target_height
 
-            elif transform_name == 'rotate':
+            elif transform_name == 'rotation':
                 # Implement rotation coordinate transformation for polygons
                 angle = params.get('angle', 0)
                 if angle != 0:
@@ -758,6 +818,37 @@ def _transform_polygon(polygon: Polygon, transformation_config: Dict[str, Any],
                                  'transform_name': transform_name
                              })
                 pass
+            
+            # Record debug info after this transformation
+            if debug_info is not None:
+                after_coords = {
+                    'type': 'polygon',
+                    'points': [(float(x), float(y)) for x, y in points]
+                }
+                
+                # Calculate coordinate changes (center point movement)
+                before_center_x = sum(p[0] for p in before_coords['points']) / len(before_coords['points'])
+                before_center_y = sum(p[1] for p in before_coords['points']) / len(before_coords['points'])
+                after_center_x = sum(p[0] for p in after_coords['points']) / len(after_coords['points'])
+                after_center_y = sum(p[1] for p in after_coords['points']) / len(after_coords['points'])
+                
+                coordinate_changes = {
+                    'center_x_change': after_center_x - before_center_x,
+                    'center_y_change': after_center_y - before_center_y,
+                    'point_count': len(after_coords['points'])
+                }
+                
+                debug_info['transformation_steps'].append({
+                    'step': step_counter,
+                    'transformation': transform_name,
+                    'parameters': params,
+                    'before_coordinates': before_coords,
+                    'after_coordinates': after_coords,
+                    'coordinate_changes': coordinate_changes,
+                    'current_dimensions': {'width': current_width, 'height': current_height}
+                })
+                
+                step_counter += 1
 
     # clip points
     valid_points = []
@@ -774,183 +865,4 @@ def _transform_polygon(polygon: Polygon, transformation_config: Dict[str, Any],
 
     return Polygon(valid_points, polygon.class_name, polygon.class_id, polygon.confidence)
 
-
-# ------------------------------------------------------
-# Debug versions of transformation functions
-# ------------------------------------------------------
-
-def _transform_bbox_with_debug(bbox: BoundingBox, transformation_config: Dict[str, Any],
-                              original_dims: Tuple[int, int], new_dims: Tuple[int, int], 
-                              ann_debug: Dict) -> Optional[BoundingBox]:
-    """Debug version: bbox updates by sequential transforms with step tracking."""
-    x_min, y_min, x_max, y_max = bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max
-    orig_width, orig_height = original_dims
-    new_width, new_height = new_dims
-
-    current_width, current_height = orig_width, orig_height
-    coordinate_transforms = {'resize', 'rotate', 'flip', 'crop', 'random_zoom', 'affine_transform', 'perspective_warp', 'shear'}
-    
-    step_counter = 0
-
-    for transform_name, params in transformation_config.items():
-        if transform_name in coordinate_transforms and params.get('enabled', True):
-            # Record coordinates before this transformation
-            before_coords = {
-                'x_min': float(x_min),
-                'y_min': float(y_min),
-                'x_max': float(x_max),
-                'y_max': float(y_max)
-            }
-            
-            # Apply the transformation (simplified version for debug)
-            if transform_name == 'flip':
-                if params.get('horizontal', False):
-                    x_min, x_max = current_width - x_max, current_width - x_min
-                if params.get('vertical', False):
-                    y_min, y_max = current_height - y_max, current_height - y_min
-                    
-            elif transform_name == 'resize':
-                target_width = params.get('width', 640)
-                target_height = params.get('height', 640)
-                width_ratio = target_width / current_width
-                height_ratio = target_height / current_height
-                x_min *= width_ratio; x_max *= width_ratio
-                y_min *= height_ratio; y_max *= height_ratio
-                current_width, current_height = target_width, target_height
-                
-            elif transform_name == 'rotate':
-                # Simplified rotation tracking (actual rotation is complex)
-                center_x = (x_min + x_max) / 2
-                center_y = (y_min + y_max) / 2
-                # Note: This is simplified - actual rotation would need matrix math
-                
-            # Record coordinates after this transformation
-            after_coords = {
-                'x_min': float(x_min),
-                'y_min': float(y_min),
-                'x_max': float(x_max),
-                'y_max': float(y_max)
-            }
-            
-            # Calculate changes
-            coordinate_changes = {
-                'x_min_change': after_coords['x_min'] - before_coords['x_min'],
-                'y_min_change': after_coords['y_min'] - before_coords['y_min'],
-                'x_max_change': after_coords['x_max'] - before_coords['x_max'],
-                'y_max_change': after_coords['y_max'] - before_coords['y_max'],
-                'center_x_change': ((after_coords['x_min'] + after_coords['x_max'])/2) - ((before_coords['x_min'] + before_coords['x_max'])/2),
-                'center_y_change': ((after_coords['y_min'] + after_coords['y_max'])/2) - ((before_coords['y_min'] + before_coords['y_max'])/2)
-            }
-            
-            # Record this transformation step
-            ann_debug['transformation_steps'].append({
-                'step': step_counter,
-                'transformation': transform_name,
-                'parameters': params,
-                'coordinates_before': before_coords,
-                'coordinates_after': after_coords,
-                'coordinate_changes': coordinate_changes,
-                'current_image_size': [current_width, current_height]
-            })
-            
-            step_counter += 1
-
-    # Clip to bounds
-    x_min = max(0, min(x_min, new_width))
-    y_min = max(0, min(y_min, new_height))
-    x_max = max(0, min(x_max, new_width))
-    y_max = max(0, min(y_max, new_height))
-
-    if x_min >= x_max or y_min >= y_max:
-        ann_debug['transformation_steps'].append({
-            'step': step_counter,
-            'transformation': 'clipping_validation',
-            'note': 'BoundingBox became invalid after clipping, annotation dropped',
-            'final_bounds': [x_min, y_min, x_max, y_max]
-        })
-        return None
-
-    return BoundingBox(x_min, y_min, x_max, y_max, bbox.class_name, bbox.class_id, bbox.confidence)
-
-
-def _transform_polygon_with_debug(polygon: Polygon, transformation_config: Dict[str, Any],
-                                 original_dims: Tuple[int, int], new_dims: Tuple[int, int],
-                                 ann_debug: Dict) -> Optional[Polygon]:
-    """Debug version: polygon updates by sequential transforms with step tracking."""
-    points = list(polygon.points)
-    orig_width, orig_height = original_dims
-    new_width, new_height = new_dims
-
-    current_width, current_height = orig_width, orig_height
-    coordinate_transforms = {'resize', 'rotate', 'flip', 'crop', 'random_zoom', 'affine_transform', 'perspective_warp', 'shear'}
-    
-    step_counter = 0
-
-    for transform_name, params in transformation_config.items():
-        if transform_name in coordinate_transforms and params.get('enabled', True):
-            # Record coordinates before this transformation
-            before_points = [(float(x), float(y)) for x, y in points]
-            
-            # Apply the transformation (simplified version for debug)
-            if transform_name == 'flip':
-                if params.get('horizontal', False):
-                    points = [(current_width - x, y) for x, y in points]
-                if params.get('vertical', False):
-                    points = [(x, current_height - y) for x, y in points]
-                    
-            elif transform_name == 'resize':
-                target_width = params.get('width', 640)
-                target_height = params.get('height', 640)
-                width_ratio = target_width / current_width
-                height_ratio = target_height / current_height
-                points = [(x * width_ratio, y * height_ratio) for x, y in points]
-                current_width, current_height = target_width, target_height
-                
-            elif transform_name == 'rotate':
-                # Simplified rotation tracking
-                pass  # Complex rotation would need matrix math
-                
-            # Record coordinates after this transformation
-            after_points = [(float(x), float(y)) for x, y in points]
-            
-            # Calculate point-by-point changes
-            point_changes = []
-            for i, (before_pt, after_pt) in enumerate(zip(before_points, after_points)):
-                point_changes.append({
-                    'point_index': i,
-                    'x_change': after_pt[0] - before_pt[0],
-                    'y_change': after_pt[1] - before_pt[1],
-                    'before': before_pt,
-                    'after': after_pt
-                })
-            
-            # Record this transformation step
-            ann_debug['transformation_steps'].append({
-                'step': step_counter,
-                'transformation': transform_name,
-                'parameters': params,
-                'points_before': before_points,
-                'points_after': after_points,
-                'point_changes': point_changes,
-                'current_image_size': [current_width, current_height]
-            })
-            
-            step_counter += 1
-
-    # Clip points to bounds
-    valid_points = []
-    for x, y in points:
-        valid_points.append((max(0, min(x, new_width)), max(0, min(y, new_height))))
-
-    if len(valid_points) < 3:
-        ann_debug['transformation_steps'].append({
-            'step': step_counter,
-            'transformation': 'clipping_validation',
-            'note': 'Polygon has less than 3 valid points after clipping, annotation dropped',
-            'valid_points': len(valid_points),
-            'original_points': len(polygon.points)
-        })
-        return None
-
-    return Polygon(valid_points, polygon.class_name, polygon.class_id, polygon.confidence)
 

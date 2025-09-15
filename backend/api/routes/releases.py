@@ -3953,7 +3953,7 @@ def track_transformations_for_annotations(transformations: List[dict], original_
     
     # Define geometric vs photometric transformations
     geometric_transform_types = {
-        'resize', 'rotate', 'flip', 'crop', 'random_zoom', 
+        'resize', 'rotate', 'rotation', 'flip', 'crop', 'random_zoom', 
         'affine_transform', 'perspective_warp', 'shear'
     }
     photometric_transform_types = {
@@ -3975,7 +3975,9 @@ def track_transformations_for_annotations(transformations: List[dict], original_
             'index': idx,
             'type': transform_type,
             'params': transform_params,
-            'is_geometric': transform_type in geometric_transform_types
+            'is_geometric': transform_type in geometric_transform_types,
+            'geometric_types': list(geometric_transform_types),
+            'transform_type_exact': repr(transform_type)
         })
         
         # Add to sequence (preserves order)
@@ -4054,7 +4056,10 @@ def track_transformations_for_annotations(transformations: List[dict], original_
         'geometric_count': tracking_data["geometric_count"],
         'photometric_count': tracking_data["photometric_count"],
         'has_geometric_transforms': tracking_data["has_geometric_transforms"],
-        'baseline_resize_added': original_dims != final_dims
+        'baseline_resize_added': original_dims != final_dims,
+        'geometric_transforms': geometric_transforms,
+        'photometric_transforms': photometric_transforms,
+        'all_transform_types': [t.get("type") for t in transformations]
     })
     
     return tracking_data
