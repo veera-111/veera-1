@@ -895,9 +895,9 @@ The system is now COMPLETE and ready for testing with your 5 images + 2-3 tools 
 
 ### **ISSUE DISCOVERED**: 
 - ❌ **Debug.json files**: NOT being created in ZIP metadata folder during release process
-- ❌ **Rotation transformation**: Annotations not rotating with image (rotation -23° not applied to coordinates)
-- ❌ **Resize transformation**: Annotations not scaling properly from 800x600 to 240x240
-- ✅ **Flip transformation**: Working correctly (flip_horizontal applied properly)
+- ❌ **Rotation transformation**: Annotations NOT rotating at all (rotation -23° not implemented/working)
+- ❌ **Resize transformation**: Annotations ARE resizing but NOT PERFECTLY (wrong scaling calculation from 800x600 to 240x240)
+- ❌ **Flip transformation**: Annotations ARE flipping but NOT ACCURATELY (because resize scaling is imperfect, flip coordinates are also wrong)
 
 ### **ROOT CAUSE ANALYSIS**:
 
@@ -933,44 +933,74 @@ coordinate_transforms = {'resize', 'rotation', 'flip', 'crop', 'random_zoom', 'a
 - ✅ **Transformation names match**: `flip`, `rotation`, `resize` are all in geometric_transform_types
 - ✅ **Annotation transformer supports**: All three transformations in coordinate_transforms set
 - ✅ **Debug tracking enabled**: Logs show "resize" detected with debug_tracking=true
-- ❌ **Actual issue**: Annotation transformer expects BoundingBox/Polygon objects, not dictionaries
+- ✅ **Transformations ARE happening**: Annotations are being transformed (not staying at original coordinates)
+- ❌ **Resize scaling imperfect**: Wrong scale factors applied for 800x600 → 240x240 transformation
+- ❌ **Rotation not working**: Rotation -23° not being applied at all to annotations
+- ❌ **Flip affected by resize**: Because resize is imperfect, flip coordinates are also wrong
+- ❌ **Mixed data types**: DB has both integers (200) and floats (200.5, 200.66666) coordinates
 
-### **DISCOVERED BUG**:
+### **DISCOVERED ISSUES**:
+
+#### **1. Transformation Calculation Bugs**:
 ```python
-# annotation_transformer.py expects:
-test_annotation = BoundingBox(x_min=200.0, y_min=150.0, x_max=600.0, y_max=450.0, class_name='car', class_id=1)
+# RESIZE ISSUE: Wrong scaling calculation for 800x600 → 240x240
+# Expected: scale_x = 240/800 = 0.3, scale_y = 240/600 = 0.4
+# But actual scaling is imperfect/incorrect
 
-# But releases.py is passing dictionary format:
-test_annotation = {'type': 'bbox', 'x_min': 200.0, 'y_min': 150.0, 'x_max': 600.0, 'y_max': 450.0, 'class_name': 'car', 'class_id': 1}
+# ROTATION ISSUE: Rotation -23° not being applied at all
+# Rotation transformation exists but not working
 
-# Error: "tuple indices must be integers or slices, not str"
+# FLIP ISSUE: Because resize scaling is wrong, flip coordinates are also wrong
+# Flip depends on correct image dimensions after resize
+```
+
+#### **2. Data Format Issues**:
+```python
+# DB coordinates are mixed types:
+# Sometimes: x_min = 200 (integer)
+# Sometimes: x_min = 200.5 or 200.66666 (float)
+# Need to handle both integer and float coordinates properly
 ```
 
 ### **PERFECT SOLUTION FOR NEXT SESSION**:
 
-#### **STEP 1: Fix Data Format Conversion**
-- Convert dictionary annotations to BoundingBox/Polygon objects before calling annotation_transformer
-- Ensure proper object creation with all required fields
+#### **STEP 1: Fix Resize Scaling Calculation**
+- Debug why resize 800x600 → 240x240 is not using correct scale factors (0.3, 0.4)
+- Check annotation_transformer.py resize logic for calculation errors
+- Ensure proper scaling: new_x = old_x * (240/800), new_y = old_y * (240/600)
 
-#### **STEP 2: Verify Transformation Application**
-- Test resize: 800x600 → 240x240 (scale_x=0.3, scale_y=0.4)
-- Test rotation: -23° around image center
-- Test flip: horizontal flip (new_x = width - old_x)
+#### **STEP 2: Fix Rotation Implementation**
+- Debug why rotation -23° is not being applied to annotations at all
+- Check if rotation transformation is being called in annotation_transformer
+- Verify rotation matrix calculations and center point logic
 
-#### **STEP 3: Confirm Debug.json Creation**
+#### **STEP 3: Fix Flip After Resize**
+- Once resize is perfect, flip will automatically be more accurate
+- Flip depends on correct image dimensions after resize transformation
+- Test flip: horizontal flip (new_x = current_width - old_x)
+
+#### **STEP 4: Handle Mixed Data Types**
+- Ensure annotation_transformer handles both integer (200) and float (200.5, 200.66666) coordinates
+- Add proper type conversion: float(x_min), float(y_min), etc.
+
+#### **STEP 5: Confirm Debug.json Creation**
 - Verify geometric transforms are detected correctly
 - Ensure has_geometric_transforms flag is True
 - Check debug.json files appear in ZIP metadata folder
 
 ### **EXPECTED RESULTS AFTER FIX**:
-- ✅ Debug.json files created in ZIP metadata folder
-- ✅ Rotation annotations rotate correctly with image
-- ✅ Resize annotations scale properly from 800x600 to 240x240
-- ✅ All transformations working perfectly
+- ✅ **Perfect resize**: Annotations scale exactly with correct factors (0.3, 0.4) from 800x600 to 240x240
+- ✅ **Working rotation**: Annotations rotate -23° correctly around image center
+- ✅ **Accurate flip**: Flip coordinates perfect because resize is now correct
+- ✅ **Debug.json files**: Created in ZIP metadata folder with transformation tracking
+- ✅ **Mixed data types**: Both integer and float coordinates handled properly
 
 ### **FILES TO MODIFY**:
-1. **releases.py**: Fix annotation format conversion before calling annotation_transformer
-2. **Test thoroughly**: Verify all three transformations work correctly
+1. **annotation_transformer.py**: Fix resize scaling calculation bugs (lines with resize logic)
+2. **annotation_transformer.py**: Fix rotation implementation (lines 446, 714 - rotation transformation)
+3. **annotation_transformer.py**: Add proper float/int coordinate handling
+4. **releases.py**: Ensure proper data passing to annotation_transformer
+5. **Test thoroughly**: Verify perfect resize (0.3, 0.4 factors), working rotation (-23°), accurate flip
 
 ### **READY FOR NEXT SESSION**: Complete understanding of issue and exact solution path identified. together
 4. Document final working solution
